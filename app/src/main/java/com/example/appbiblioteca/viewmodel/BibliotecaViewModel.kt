@@ -6,41 +6,43 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.appbiblioteca.database.`DatabaseHelper.kt`
-import com.example.appbiblioteca.model.`Livro.kt`
+import com.example.appbiblioteca.database.BibliotecaDatabase
+import com.example.appbiblioteca.model.Livro
 import com.example.appbiblioteca.repository.LivroRepository
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-sealed interface BibliotecaUiState {
-    object Loading : BibliotecaUiState
-    data class Success(val livros: List<`Livro.kt`>) : BibliotecaUiState
-    data class Error(val message: String) : BibliotecaUiState
+sealed interface BuscaState {
+    object Idle : BuscaState
+    object Loading : BuscaState
+    data class Error(val message: String) : BuscaState
 }
 
 class BibliotecaViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = LivroRepository(`DatabaseHelper.kt`(application))
+    private val repository = LivroRepository(
+        dao = BibliotecaDatabase.getInstance(application).livroDao()
+    )
 
-    var uiState: BibliotecaUiState by mutableStateOf(BibliotecaUiState.Loading)
+    // Fonte única: sempre reflete o que está salvo no Room
+    val livros: StateFlow<List<Livro>> = repository.observeLivros()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    var buscaState: BuscaState by mutableStateOf(BuscaState.Idle)
         private set
 
-    init { carregarLivros() }
-
-    fun carregarLivros() {
+    fun buscar(query: String) {
+        if (query.isBlank()) return
         viewModelScope.launch {
-            uiState = BibliotecaUiState.Loading
-            uiState = try {
-                BibliotecaUiState.Success(repository.listarTodos())
+            buscaState = BuscaState.Loading
+            buscaState = try {
+                repository.buscarEArmazenar(query)
+                BuscaState.Idle
             } catch (e: Exception) {
-                BibliotecaUiState.Error(e.message ?: "Erro ao acessar o banco de dados.")
+                BuscaState.Error("Não foi possível buscar agora. Mostrando livros salvos.")
             }
-        }
-    }
-
-    fun salvarLivro(titulo: String, autor: String, ano: Int) {
-        viewModelScope.launch {
-            repository.inserir(`Livro.kt`(titulo = titulo, autor = autor, ano = ano))
-            carregarLivros()
         }
     }
 }
